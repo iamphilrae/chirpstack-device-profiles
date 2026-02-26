@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rquickjs::CatchResultExt;
 
 mod vendor_base64_js;
@@ -22,11 +22,13 @@ pub fn run_tests(function: &str, codec: &str, codec_tests: &str) -> Result<()> {
 
     let script = format!(
         r#"
+        import {{ Buffer }} from "buffer";
+
         {}
 
         const tests = {};
 
-        for (test of tests) {{
+        for (const test of tests) {{
             const out = {}(test.input);
             if (JSON.stringify(out) !== JSON.stringify(test.expected)) {{
                 throw new Error("Test '"+ test.name +"' failed - Expected: " + JSON.stringify(test.expected) + " Got: " + JSON.stringify(out));
@@ -37,30 +39,16 @@ pub fn run_tests(function: &str, codec: &str, codec_tests: &str) -> Result<()> {
     );
 
     ctx.with(|ctx| -> Result<()> {
-        let buff = rquickjs::Module::declare(
-            ctx.clone(),
-            "b",
-            r#"
-            import { Buffer } from "buffer";
-            export { Buffer }
-            "#,
-        )?;
+        let module = rquickjs::Module::declare(ctx.clone(), "main", script)
+            .catch(&ctx)
+            .map_err(|e| anyhow!("JS error: {}", e))?;
 
-        let (buff, buff_promise) = buff
+        let (_, promise) = module
             .eval()
             .catch(&ctx)
             .map_err(|e| anyhow!("JS error: {}", e))?;
-        let _ret: rquickjs::Value = buff_promise.finish()?;
-        let buff: rquickjs::Function = buff.get("Buffer")?;
-
-        let globals = ctx.globals();
-        globals.set("Buffer", buff)?;
-
-        let mut eval_options = rquickjs::context::EvalOptions::default();
-        eval_options.strict = false;
-
-        let _ret: rquickjs::Value = ctx
-            .eval_with_options(script, eval_options)
+        () = promise
+            .finish()
             .catch(&ctx)
             .map_err(|e| anyhow!("JS error: {}", e))?;
 
